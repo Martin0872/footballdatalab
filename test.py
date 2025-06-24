@@ -3,6 +3,10 @@ import pandas as pd
 import numpy as np
 import random
 from math import pow
+import re
+
+st.set_page_config(page_title="축구 시뮬레이터", layout="wide")
+st.title("⚽ 축구 시뮬레이터 (리그 & 조별리그)")
 
 # ----------------------- 리그 시뮬레이션 함수 ----------------------- #
 def parse_league_teams(text):
@@ -106,28 +110,107 @@ def run_league_sim(teams, matches, n_sim):
         table.append(row)
     return pd.DataFrame(table).sort_values("평균순위")
 
+# ----------------------- 조별리그 함수 ----------------------- #
+def parse_group_teams(text):
+    teams = {}
+    for line in text.strip().splitlines():
+        name, elo1, elo2, pts = line.split()
+        teams[name] = {"elo1": float(elo1), "elo2": float(elo2), "pts": int(pts)}
+    return teams
+
+def parse_group_matches(text):
+    return [tuple(line.split()) for line in text.strip().splitlines() if line.strip()]
+
+def parse_group_results(text):
+    results = []
+    pattern = re.compile(r"(\S+) (\d+)-(\d+) (\S+)")
+    for line in text.strip().splitlines():
+        m = pattern.match(line)
+        if m:
+            t1, g1, g2, t2 = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4)
+            results.append((t1, t2, g1, g2))
+    return results
+
+def run_group_sim(teams, matches, past_results, n_sim, rank_start, rank_end):
+    counts = {t: [0] * len(teams) for t in teams}
+    for _ in range(n_sim):
+        results = list(past_results)
+        for t1, t2 in matches:
+            elo1 = teams[t1]['elo1'] * 0.9 + teams[t1]['elo2'] * 0.1
+            elo2 = teams[t2]['elo1'] * 0.9 + teams[t2]['elo2'] * 0.1
+            wp, dp, lp = match_probabilities(t1, t2, teams)
+            s1, s2 = simulate_match(wp, dp, lp)
+            results.append((t1, t2, s1, s2))
+        stats = {t: {"pts": teams[t]['pts'], "gf": 0, "ga": 0} for t in teams}
+        for t1, t2, g1, g2 in results:
+            stats[t1]["gf"] += g1
+            stats[t1]["ga"] += g2
+            stats[t2]["gf"] += g2
+            stats[t2]["ga"] += g1
+            if g1 > g2:
+                stats[t1]["pts"] += 3
+            elif g1 < g2:
+                stats[t2]["pts"] += 3
+            else:
+                stats[t1]["pts"] += 1
+                stats[t2]["pts"] += 1
+        ranking = sorted(teams.keys(), key=lambda t: (stats[t]["pts"], stats[t]["gf"] - stats[t]["ga"], stats[t]["gf"]), reverse=True)
+        for i, t in enumerate(ranking):
+            counts[t][i] += 1
+    rows = []
+    for t in teams:
+        probs = [c / n_sim * 100 for c in counts[t]]
+        range_prob = sum(probs[rank_start-1:rank_end])
+        row = {"팀명": t, **{f"{i+1}위": f"{p:.1f}%" for i, p in enumerate(probs)}, f"{rank_start}~{rank_end}위": f"{range_prob:.1f}%"}
+        rows.append(row)
+    return pd.DataFrame(rows)
+
 # ----------------------- Streamlit UI ----------------------- #
-st.set_page_config(page_title="축구 시뮬레이터", layout="wide")
-st.title("⚽ 축구 리그 시뮬레이터 (모바일 지원)")
+tabs = st.tabs(["🏆 리그 시뮬레이션", "🏟 조별리그 시뮬레이션"])
 
-with st.expander("1️⃣ 팀 정보 입력 (팀이름 Elo1 Elo2 승점)"):
-    team_text = st.text_area("예시: TeamA 1500 1520 3", height=200)
+with tabs[0]:
+    with st.expander("1️⃣ 팀 정보 입력 (팀이름 Elo1 Elo2 승점)"):
+        team_text = st.text_area("예시: TeamA 1500 1520 3", height=200)
 
-with st.expander("2️⃣ 경기 입력 (팀1 팀2)"):
-    match_text = st.text_area("예시: TeamA TeamB", height=200)
+    with st.expander("2️⃣ 경기 입력 (팀1 팀2)"):
+        match_text = st.text_area("예시: TeamA TeamB", height=200)
 
-col1, col2 = st.columns(2)
-with col1:
-    n_sim = st.number_input("시뮬레이션 횟수", min_value=100, max_value=100000, value=1000, step=100)
-with col2:
-    run_button = st.button("시뮬레이션 실행")
+    col1, col2 = st.columns(2)
+    with col1:
+        n_sim = st.number_input("시뮬레이션 횟수", min_value=100, max_value=100000, value=1000, step=100)
+    with col2:
+        run_button = st.button("시뮬레이션 실행")
 
-if run_button:
-    teams = parse_league_teams(team_text)
-    matches = parse_league_matches(match_text)
-    if teams and matches:
-        with st.spinner("시뮬레이션 중..."):
-            df = run_league_sim(teams, matches, n_sim)
-        st.success("완료!")
-        st.dataframe(df, use_container_width=True)
-        st.bar_chart(df.set_index("팀명")["우승확률(%)"])
+    if run_button:
+        teams = parse_league_teams(team_text)
+        matches = parse_league_matches(match_text)
+        if teams and matches:
+            with st.spinner("시뮬레이션 중..."):
+                df = run_league_sim(teams, matches, n_sim)
+            st.success("완료!")
+            st.dataframe(df, use_container_width=True)
+            st.bar_chart(df.set_index("팀명")["우승확률(%)"])
+
+with tabs[1]:
+    st.markdown("### 🏟 조별리그 시뮬레이션")
+    t_input = st.text_area("1️⃣ 팀 입력 (팀 Elo1 Elo2 승점)", height=150)
+    m_input = st.text_area("2️⃣ 예정 경기 입력 (팀1 팀2)", height=100)
+    r_input = st.text_area("3️⃣ 이전 경기 결과 입력 (팀1 점수-점수 팀2)", height=100)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        g_sim = st.number_input("시뮬레이션 횟수", value=1000, step=500)
+    with col2:
+        r_start = st.number_input("순위 구간 시작", value=1, step=1)
+    with col3:
+        r_end = st.number_input("순위 구간 끝", value=2, step=1)
+    if st.button("조별리그 시뮬레이션 실행"):
+        try:
+            teams = parse_group_teams(t_input)
+            matches = parse_group_matches(m_input)
+            past = parse_group_results(r_input)
+            with st.spinner("시뮬레이션 중..."):
+                df = run_group_sim(teams, matches, past, g_sim, r_start, r_end)
+            st.success("완료!")
+            st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.error(f"입력 오류: {e}")
