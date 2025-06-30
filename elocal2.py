@@ -67,8 +67,7 @@ def update_elo(home, away, home_goals, away_goals):
 # -------------------------
 # UI
 # -------------------------
-stitle = "Elo 계산기"
-st.title(stitle)
+st.title("Elo 계산기")
 
 # 초기 Elo 입력
 initial_input = st.text_area(
@@ -103,12 +102,13 @@ if st.button("결과 입력"):
             continue
         home, hg, ag, away = match.groups()
         update_elo(home.strip(), away.strip(), int(hg), int(ag))
-    st.session_state.result_input = ""
+    # 결과 입력 후 텍스트 박스 초기화 시도
+    if "result_input" in st.session_state:
+        st.session_state["result_input"] = ""
     st.success("결과 반영 완료.")
 
 # Elo 출력
 st.subheader(f"현재 HFA: {st.session_state.HFA:.2f}")
-
 # 정렬된 팀 리스트
 sorted_data = sorted(
     st.session_state.elos.items(), key=lambda x: -x[1]
